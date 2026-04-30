@@ -11,6 +11,7 @@ import { processUIAdapter } from "./process";
 import { httpUIAdapter } from "./http";
 import { loadDynamicParser, invalidateDynamicParser, setDynamicParserResultNotifier } from "./dynamic-loader";
 import { SchemaConfigFields, buildSchemaAdapterConfig } from "./schema-config-fields";
+import { ollamaLocalUIAdapter } from "./ollama-local";
 
 const uiAdapters: UIAdapterModule[] = [];
 const adaptersByType = new Map<string, UIAdapterModule>();
@@ -57,6 +58,7 @@ function registerBuiltInUIAdapters() {
     piLocalUIAdapter,
     cursorLocalUIAdapter,
     openClawGatewayUIAdapter,
+    ollamaLocalUIAdapter,
     processUIAdapter,
     httpUIAdapter,
   ]) {

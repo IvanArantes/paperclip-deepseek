@@ -28,7 +28,12 @@ services:
       PAPERCLIP_DEPLOYMENT_MODE: "authenticated"
       PAPERCLIP_DEPLOYMENT_EXPOSURE: "private"
       PAPERCLIP_PUBLIC_URL: "${PAPERCLIP_PUBLIC_URL:-http://localhost:3100}"
-      BETTER_AUTH_SECRET: "${BETTER_AUTH_SECRET:?BETTER_AUTH_SECRET must be set}"
+      BETTER_AUTH_SECRET: "ivan123"
+      PAPERCLIP_ALLOWED_HOSTNAMES: "192.168.5.68"
+      #PAPERCLIP_PUBLIC_URL: "http://192.168.5.68:3100"
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+
     volumes:
       - paperclip-data:/paperclip
     depends_on:

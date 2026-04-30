@@ -69,6 +69,18 @@ import {
   agentConfigurationDoc as piAgentConfigurationDoc,
 } from "@paperclipai/adapter-pi-local";
 import {
+  execute as ollamaExecute,
+  listSkills as listOllamaSkills,
+  syncSkills as syncOllamaSkills,
+  testEnvironment as ollamaTestEnvironment,
+  sessionCodec as ollamaSessionCodec,
+  listModels as listOllamaModels,
+} from "@paperclipai/adapter-ollama-local/server";
+import {
+  agentConfigurationDoc as ollamaAgentConfigurationDoc,
+  models as ollamaModels,
+} from "@paperclipai/adapter-ollama-local";
+import {
   execute as hermesExecute,
   testEnvironment as hermesTestEnvironment,
   sessionCodec as hermesSessionCodec,
@@ -232,6 +244,23 @@ const piLocalAdapter: ServerAdapterModule = {
   agentConfigurationDoc: piAgentConfigurationDoc,
 };
 
+const ollamaLocalAdapter: ServerAdapterModule = {
+  type: "ollama_local",
+  execute: ollamaExecute,
+  testEnvironment: ollamaTestEnvironment,
+  listSkills: listOllamaSkills,
+  syncSkills: syncOllamaSkills,
+  sessionCodec: ollamaSessionCodec,
+  sessionManagement: getAdapterSessionManagement("ollama_local") ?? undefined,
+  models: ollamaModels,
+  listModels: listOllamaModels,
+  supportsLocalAgentJwt: true,
+  supportsInstructionsBundle: true,
+  instructionsPathKey: "instructionsFilePath",
+  requiresMaterializedRuntimeSkills: false,
+  agentConfigurationDoc: ollamaAgentConfigurationDoc,
+};
+
 // hermes-paperclip-adapter v0.2.0 predates the authToken field; cast is
 // intentional until hermes ships a matching AdapterExecutionContext type.
 const executeHermesLocal = hermesExecute as unknown as ServerAdapterModule["execute"];
@@ -319,6 +348,7 @@ function registerBuiltInAdapters() {
     geminiLocalAdapter,
     openclawGatewayAdapter,
     hermesLocalAdapter,
+    ollamaLocalAdapter,
     processAdapter,
     httpAdapter,
   ]) {
