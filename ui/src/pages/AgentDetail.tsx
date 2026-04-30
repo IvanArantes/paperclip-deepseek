@@ -2510,8 +2510,6 @@ function AgentSkillsTab({
     mutationFn: (desiredSkills: string[]) => agentsApi.syncSkills(agent.id, desiredSkills, companyId),
     onSuccess: async (snapshot) => {
       queryClient.setQueryData(queryKeys.agents.skills(agent.id), snapshot);
-      lastSavedSkillsRef.current = snapshot.desiredSkills;
-      setLastSavedSkills(snapshot.desiredSkills);
       await Promise.all([
         queryClient.invalidateQueries({ queryKey: queryKeys.agents.detail(agent.id) }),
         queryClient.invalidateQueries({ queryKey: queryKeys.agents.detail(agent.urlKey) }),

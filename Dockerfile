@@ -30,6 +30,7 @@ COPY packages/adapters/openclaw-gateway/package.json packages/adapters/openclaw-
 COPY packages/adapters/opencode-local/package.json packages/adapters/opencode-local/
 COPY packages/adapters/pi-local/package.json packages/adapters/pi-local/
 COPY packages/adapters/ollama-local/package.json packages/adapters/ollama-local/
+COPY packages/adapters/deepseek/package.json packages/adapters/deepseek/
 COPY packages/plugins/sdk/package.json packages/plugins/sdk/
 COPY --parents packages/plugins/sandbox-providers/./*/package.json packages/plugins/sandbox-providers/
 COPY packages/plugins/paperclip-plugin-fake-sandbox/package.json packages/plugins/paperclip-plugin-fake-sandbox/
