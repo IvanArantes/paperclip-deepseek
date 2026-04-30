@@ -9,6 +9,7 @@ import { printOpenClawGatewayStreamEvent } from "@paperclipai/adapter-openclaw-g
 import { processCLIAdapter } from "./process/index.js";
 import { httpCLIAdapter } from "./http/index.js";
 import { ollamaLocalCLIAdapter } from "@paperclipai/adapter-ollama-local/cli";
+import { formatStdoutEvent as formatDeepseekStdoutEvent } from "@paperclipai/adapter-deepseek/cli";
 
 const claudeLocalCLIAdapter: CLIAdapterModule = {
   type: "claude_local",
@@ -40,9 +41,9 @@ const geminiLocalCLIAdapter: CLIAdapterModule = {
   formatStdoutEvent: printGeminiStreamEvent,
 };
 
-const openclawGatewayCLIAdapter: CLIAdapterModule = {
-  type: "openclaw_gateway",
-  formatStdoutEvent: printOpenClawGatewayStreamEvent,
+const deepseekCLIAdapter: CLIAdapterModule = {
+  type: "deepseek",
+  formatStdoutEvent: formatDeepseekStdoutEvent,
 };
 
 const adaptersByType = new Map<string, CLIAdapterModule>(
@@ -55,6 +56,7 @@ const adaptersByType = new Map<string, CLIAdapterModule>(
     geminiLocalCLIAdapter,
     openclawGatewayCLIAdapter,
     ollamaLocalCLIAdapter,
+    deepseekCLIAdapter,
     processCLIAdapter,
     httpCLIAdapter,
   ].map((a) => [a.type, a]),

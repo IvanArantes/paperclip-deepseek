@@ -92,6 +92,17 @@ import {
   agentConfigurationDoc as hermesAgentConfigurationDoc,
   models as hermesModels,
 } from "hermes-paperclip-adapter";
+import {
+  execute as deepseekExecute,
+  listSkills as listDeepseekSkills,
+  syncSkills as syncDeepseekSkills,
+  testEnvironment as deepseekTestEnvironment,
+  sessionCodec as deepseekSessionCodec,
+} from "@paperclipai/adapter-deepseek/server";
+import {
+  agentConfigurationDoc as deepseekAgentConfigurationDoc,
+  models as deepseekModels,
+} from "@paperclipai/adapter-deepseek";
 import { BUILTIN_ADAPTER_TYPES } from "./builtin-adapter-types.js";
 import { buildExternalAdapters } from "./plugin-loader.js";
 import { getDisabledAdapterTypes } from "../services/adapter-plugin-store.js";
@@ -327,6 +338,22 @@ const hermesLocalAdapter: ServerAdapterModule = {
   detectModel: () => detectModelFromHermes(),
 };
 
+const deepseekAdapter: ServerAdapterModule = {
+  type: "deepseek",
+  execute: deepseekExecute,
+  testEnvironment: deepseekTestEnvironment,
+  listSkills: listDeepseekSkills,
+  syncSkills: syncDeepseekSkills,
+  sessionCodec: deepseekSessionCodec,
+  sessionManagement: getAdapterSessionManagement("deepseek") ?? undefined,
+  models: deepseekModels,
+  supportsLocalAgentJwt: true,
+  supportsInstructionsBundle: true,
+  instructionsPathKey: "instructionsFilePath",
+  requiresMaterializedRuntimeSkills: false,
+  agentConfigurationDoc: deepseekAgentConfigurationDoc,
+};
+
 const adaptersByType = new Map<string, ServerAdapterModule>();
 
 // For builtin types that are overridden by an external adapter, we keep the
@@ -349,6 +376,7 @@ function registerBuiltInAdapters() {
     openclawGatewayAdapter,
     hermesLocalAdapter,
     ollamaLocalAdapter,
+    deepseekAdapter,
     processAdapter,
     httpAdapter,
   ]) {

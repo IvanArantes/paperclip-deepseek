@@ -12,6 +12,7 @@ import { httpUIAdapter } from "./http";
 import { loadDynamicParser, invalidateDynamicParser, setDynamicParserResultNotifier } from "./dynamic-loader";
 import { SchemaConfigFields, buildSchemaAdapterConfig } from "./schema-config-fields";
 import { ollamaLocalUIAdapter } from "./ollama-local";
+import { deepseekUIAdapter } from "./deepseek";
 
 const uiAdapters: UIAdapterModule[] = [];
 const adaptersByType = new Map<string, UIAdapterModule>();
@@ -59,6 +60,7 @@ function registerBuiltInUIAdapters() {
     cursorLocalUIAdapter,
     openClawGatewayUIAdapter,
     ollamaLocalUIAdapter,
+    deepseekUIAdapter,
     processUIAdapter,
     httpUIAdapter,
   ]) {

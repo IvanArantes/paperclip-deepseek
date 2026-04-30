@@ -1,0 +1,279 @@
+import type { AdapterExecutionContext, AdapterExecutionResult, AdapterInvocationMeta } from "@paperclipai/adapter-utils";
+import { 
+  asNumber, 
+  asString, 
+  renderTemplate, 
+  DEFAULT_PAPERCLIP_AGENT_PROMPT_TEMPLATE, 
+  redactEnvForLogs, 
+  joinPromptSections, 
+  renderPaperclipWakePrompt,
+  readPaperclipRuntimeSkillEntries,
+  resolvePaperclipDesiredSkillNames,
+  parseObject,
+  buildPaperclipEnv,
+  runChildProcess,
+  ensurePathInEnv
+} from "@paperclipai/adapter-utils/server-utils";
+import fs from "node:fs/promises";
+import path from "node:path";
+import { fileURLToPath } from "node:url";
+
+const __moduleDir = path.dirname(fileURLToPath(import.meta.url));
+
+function extractShellCommands(text: string): string[] {
+  const matches = text.matchAll(/```(?:sh|bash|shell)\r?\n([\s\S]*?)```/g);
+  return Array.from(matches).map(m => m[1].trim());
+}
+
+export async function execute(ctx: AdapterExecutionContext): Promise<AdapterExecutionResult> {
+  const { runId, agent, runtime, config, context, onLog, onMeta, onSpawn, authToken } = ctx;
+
+  const apiUrl = asString(config.apiUrl, "https://api.deepseek.com").replace(/\/$/, "");
+  const apiKey = asString(config.apiKey, "").trim();
+  const model = asString(config.model, "deepseek-chat");
+  const timeoutSec = asNumber(config.timeoutSec, 0);
+
+  if (!apiKey) {
+    return {
+      exitCode: 1,
+      signal: null,
+      timedOut: false,
+      errorMessage: "DeepSeek API Key is missing in adapter configuration.",
+    };
+  }
+
+  const workspaceContext = parseObject(context.paperclipWorkspace);
+  const workspaceCwd = asString(workspaceContext.cwd, "");
+  const configuredCwd = asString(config.cwd, "");
+  const cwd = workspaceCwd || configuredCwd || process.cwd();
+
+  const storedSession = runtime.sessionParams as { messages: any[] } | null;
+
+  const rawTemplate = asString(config.promptTemplate, DEFAULT_PAPERCLIP_AGENT_PROMPT_TEMPLATE);
+  const templateData = {
+    agentId: agent.id,
+    companyId: agent.companyId,
+    runId,
+    company: { id: agent.companyId, name: "Company" },
+    agent,
+    run: { id: runId },
+    context,
+  };
+
+  const renderedPrompt = renderTemplate(rawTemplate, templateData);
+  const wakePrompt = renderPaperclipWakePrompt(context.paperclipWake, { resumedSession: Boolean(storedSession) });
+  
+  // Instructions handling
+  const instructionsFilePath = asString(config.instructionsFilePath, "").trim();
+  let instructions = "";
+  if (instructionsFilePath) {
+    try {
+      instructions = await fs.readFile(instructionsFilePath, "utf-8");
+    } catch (err) {
+      const reason = err instanceof Error ? err.message : String(err);
+      await onLog(
+        "stderr",
+        `[paperclip] Warning: could not read agent instructions file "${instructionsFilePath}": ${reason}\n`,
+      );
+    }
+  }
+
+  // Skills injection & Path setup
+  let skillsDocumentation = "";
+  const skillBinDirs: string[] = [];
+  try {
+    const availableSkills = await readPaperclipRuntimeSkillEntries(config, __moduleDir);
+    const desiredSkillNames = resolvePaperclipDesiredSkillNames(config, availableSkills);
+    const activeSkills = availableSkills.filter(s => desiredSkillNames.includes(s.key));
+    
+    if (activeSkills.length > 0) {
+      const skillDocs = await Promise.all(activeSkills.map(async (s) => {
+        const binPath = path.join(s.source, "bin");
+        try {
+          await fs.access(binPath);
+          skillBinDirs.push(binPath);
+        } catch {}
+
+        try {
+          const content = await fs.readFile(path.join(s.source, "SKILL.md"), "utf-8");
+          return `### Skill: ${s.runtimeName}\n\n${content}`;
+        } catch (e) {
+          return "";
+        }
+      }));
+      skillsDocumentation = "## Available Skills\n\nYou have the following skills (tools) available. To use them, follow the instructions in their documentation below.\n\n" + skillDocs.filter(Boolean).join("\n\n");
+    }
+  } catch (err) {
+    await onLog("stderr", `[paperclip] Warning: could not load skills: ${err}\n`);
+  }
+
+  // Environment setup for tool execution
+  const env: Record<string, string> = { 
+    ...buildPaperclipEnv(agent),
+    PAPERCLIP_RUN_ID: runId,
+  };
+  if (authToken) {
+    env.PAPERCLIP_API_KEY = authToken;
+  }
+  // Try to find API URL from context if possible, or fallback to relative/standard
+  if (context.paperclipApiUrl) {
+    env.PAPERCLIP_API_URL = String(context.paperclipApiUrl);
+  }
+
+  const mergedEnv = ensurePathInEnv({ ...process.env, ...env });
+  const pathKey = mergedEnv.Path !== undefined ? "Path" : "PATH";
+  const basePath = mergedEnv[pathKey] ?? "";
+  if (skillBinDirs.length > 0) {
+    mergedEnv[pathKey] = [...skillBinDirs, basePath].filter(Boolean).join(path.delimiter);
+  }
+
+  const systemContent = joinPromptSections([
+    instructions,
+    skillsDocumentation,
+    wakePrompt,
+    renderedPrompt,
+  ]);
+
+  // Session handling (OpenAI-compatible)
+  const messages = storedSession?.messages ? [...storedSession.messages] : [
+    { role: "system", content: systemContent }
+  ];
+
+  if (!storedSession) {
+    messages.push({ role: "user", content: "Begin." });
+  } else if (wakePrompt) {
+    // If resuming with a wake prompt, inject it to give context on why we're back
+    messages.push({ role: "user", content: wakePrompt });
+  }
+
+  let exitCode = 0;
+  let timedOut = false;
+  let errorMessage: string | null = null;
+  let usage: any = null;
+  let turn = 0;
+  const maxTurns = 10;
+  let finalResponse = "";
+
+  const controller = new AbortController();
+  const timer = timeoutSec > 0 ? setTimeout(() => controller.abort(), timeoutSec * 1000) : null;
+
+  try {
+    while (turn < maxTurns) {
+      turn++;
+      let turnResponse = "";
+      
+      const res = await fetch(`${apiUrl}/chat/completions`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "Authorization": `Bearer ${apiKey}`,
+        },
+        body: JSON.stringify({
+          model,
+          messages,
+          stream: true,
+          usage_metadata: true,
+        }),
+        signal: controller.signal,
+      });
+
+      if (!res.ok) {
+        exitCode = 1;
+        const errText = await res.text().catch(() => "");
+        errorMessage = `DeepSeek API error: ${res.status} ${res.statusText}\n${errText}`;
+        await onLog("stderr", errorMessage + "\n");
+        break;
+      }
+
+      if (res.body) {
+        const reader = res.body.getReader();
+        const decoder = new TextDecoder();
+        
+        while (true) {
+          const { done, value } = await reader.read();
+          if (done) break;
+          
+          const chunk = decoder.decode(value, { stream: true });
+          const lines = chunk.split("\n").filter(l => l.trim().startsWith("data: "));
+          
+          for (const line of lines) {
+            const dataStr = line.replace(/^data: /, "").trim();
+            if (dataStr === "[DONE]") break;
+            
+            try {
+              const parsed = JSON.parse(dataStr);
+              const delta = parsed.choices?.[0]?.delta?.content;
+              if (delta) {
+                turnResponse += delta;
+                await onLog("stdout", JSON.stringify({ type: "assistant", content: delta }) + "\n");
+              }
+              if (parsed.usage) {
+                usage = {
+                  inputTokens: (usage?.inputTokens || 0) + parsed.usage.prompt_tokens,
+                  outputTokens: (usage?.outputTokens || 0) + parsed.usage.completion_tokens,
+                };
+              }
+            } catch (e) {}
+          }
+        }
+      }
+
+      messages.push({ role: "assistant", content: turnResponse });
+      finalResponse = turnResponse;
+
+      // Tool detection
+      const commands = extractShellCommands(turnResponse);
+      if (commands.length === 0) break;
+
+      for (const cmd of commands) {
+        await onLog("stdout", `\n[paperclip] Executing skill command...\n`);
+        const result = await runChildProcess(runId, "sh", ["-c", cmd], {
+          cwd,
+          env: mergedEnv as Record<string, string>,
+          timeoutSec: timeoutSec > 0 ? timeoutSec : 300,
+          graceSec: 10,
+          onLog: async (stream: "stdout" | "stderr", chunk: string) => {
+            await onLog(stream, chunk);
+          },
+          onSpawn
+        });
+
+        const output = `Command exited with code ${result.exitCode}.\nSTDOUT:\n${result.stdout}\nSTDERR:\n${result.stderr}`;
+        messages.push({ role: "user", content: `TOOL_OUTPUT:\n${output}` });
+        await onLog("stdout", `\n[paperclip] Command finished (exit code ${result.exitCode}).\n`);
+      }
+    }
+  } catch (err: any) {
+    if (controller.signal.aborted) {
+      timedOut = true;
+      exitCode = 124;
+      errorMessage = "Execution timed out";
+    } else {
+      exitCode = 1;
+      errorMessage = err.message;
+      await onLog("stderr", err.message + "\n");
+    }
+  } finally {
+    if (timer) clearTimeout(timer);
+  }
+
+  // Emit result event for UI consumption
+  await onLog("stdout", JSON.stringify({ 
+    type: "result", 
+    exitCode, 
+    usage: usage || { inputTokens: 0, outputTokens: 0 },
+    errorMessage 
+  }) + "\n");
+
+  return {
+    exitCode,
+    signal: null,
+    timedOut,
+    errorMessage,
+    usage,
+    sessionParams: { messages },
+    model,
+    provider: "deepseek",
+    summary: finalResponse.length > 0 ? finalResponse : null,
+  };
+}
