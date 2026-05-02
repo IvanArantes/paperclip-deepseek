@@ -420,7 +420,9 @@ export function normalizeTranscript(entries: TranscriptEntry[], streaming: boole
     if (entry.kind === "assistant" || entry.kind === "user") {
       const isStreaming = streaming && entry.kind === "assistant" && entry.delta === true;
       if (previous?.type === "message" && previous.role === entry.kind) {
-        previous.text += previous.text.endsWith("\n") || entry.text.startsWith("\n") ? entry.text : `\n${entry.text}`;
+        const needsSeparator = !previous.text.endsWith("\n") && !entry.text.startsWith("\n");
+        const separator = needsSeparator ? (entry.delta || previous.text.endsWith(" ") || entry.text.startsWith(" ") ? "" : " ") : "";
+        previous.text += separator + entry.text;
         previous.ts = entry.ts;
         previous.streaming = previous.streaming || isStreaming;
       } else {
@@ -438,7 +440,9 @@ export function normalizeTranscript(entries: TranscriptEntry[], streaming: boole
     if (entry.kind === "thinking") {
       const isStreaming = streaming && entry.delta === true;
       if (previous?.type === "thinking") {
-        previous.text += previous.text.endsWith("\n") || entry.text.startsWith("\n") ? entry.text : `\n${entry.text}`;
+        const needsSeparator = !previous.text.endsWith("\n") && !entry.text.startsWith("\n");
+        const separator = needsSeparator ? (entry.delta || previous.text.endsWith(" ") || entry.text.startsWith(" ") ? "" : " ") : "";
+        previous.text += separator + entry.text;
         previous.ts = entry.ts;
         previous.streaming = previous.streaming || isStreaming;
       } else {
