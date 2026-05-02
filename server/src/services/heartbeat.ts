@@ -121,6 +121,7 @@ import { recoveryService } from "./recovery/service.js";
 import { productivityReviewService } from "./productivity-review.js";
 import { withAgentStartLock } from "./agent-start-lock.js";
 import { redactCurrentUserText, redactCurrentUserValue } from "../log-redaction.js";
+import { redactEventPayload } from "../redaction.js";
 import {
   hasSessionCompactionThresholds,
   resolveSessionCompactionPolicy,
@@ -144,7 +145,7 @@ const MAX_RUN_EVENT_PAYLOAD_OBJECT_KEYS = 100;
 const MAX_RUN_EVENT_PAYLOAD_DEPTH = 6;
 const HEARTBEAT_MAX_CONCURRENT_RUNS_DEFAULT = AGENT_DEFAULT_MAX_CONCURRENT_RUNS;
 const HEARTBEAT_MAX_CONCURRENT_RUNS_MIN = 1;
-const HEARTBEAT_MAX_CONCURRENT_RUNS_MAX = 10;
+const HEARTBEAT_MAX_CONCURRENT_RUNS_MAX = 50;
 const LIVENESS_BOOKKEEPING_ACTIVITY_ACTIONS = [
   "environment.lease_acquired",
   "environment.lease_released",
@@ -743,6 +744,8 @@ const heartbeatRunIssueSummaryColumns = {
   status: heartbeatRuns.status,
   invocationSource: heartbeatRuns.invocationSource,
   triggerDetail: heartbeatRuns.triggerDetail,
+  contextCommentId: sql<string | null>`${heartbeatRuns.contextSnapshot} ->> 'commentId'`.as("contextCommentId"),
+  contextWakeCommentId: sql<string | null>`${heartbeatRuns.contextSnapshot} ->> 'wakeCommentId'`.as("contextWakeCommentId"),
   startedAt: heartbeatRuns.startedAt,
   finishedAt: heartbeatRuns.finishedAt,
   createdAt: heartbeatRuns.createdAt,
@@ -3118,9 +3121,10 @@ export function heartbeatService(db: Db, options: HeartbeatServiceOptions = {}) 
     const boundedPayload = event.payload
       ? boundHeartbeatRunEventPayloadForStorage(event.payload)
       : event.payload;
-    const sanitizedPayload = boundedPayload
-      ? redactCurrentUserValue(boundedPayload, currentUserRedactionOptions)
-      : boundedPayload;
+    const secretSanitizedPayload = boundedPayload ? redactEventPayload(boundedPayload) : boundedPayload;
+    const sanitizedPayload = secretSanitizedPayload
+      ? redactCurrentUserValue(secretSanitizedPayload, currentUserRedactionOptions)
+      : secretSanitizedPayload;
 
     await db.insert(heartbeatRunEvents).values({
       companyId: run.companyId,

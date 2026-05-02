@@ -73,6 +73,12 @@ import { renderOrgChartSvg, renderOrgChartPng, type OrgNode, type OrgChartStyle,
 import { instanceSettingsService } from "../services/instance-settings.js";
 import { runClaudeLogin } from "@paperclipai/adapter-claude-local/server";
 import {
+  DEFAULT_ACPX_LOCAL_AGENT,
+  DEFAULT_ACPX_LOCAL_MODE,
+  DEFAULT_ACPX_LOCAL_NON_INTERACTIVE_PERMISSIONS,
+  DEFAULT_ACPX_LOCAL_PERMISSION_MODE,
+} from "@paperclipai/adapter-acpx-local";
+import {
   DEFAULT_CODEX_LOCAL_BYPASS_APPROVALS_AND_SANDBOX,
   DEFAULT_CODEX_LOCAL_MODEL,
 } from "@paperclipai/adapter-codex-local";
@@ -99,7 +105,8 @@ function readRunLogLimitBytes(value: unknown) {
 function readLiveRunsQueryInt(value: unknown, max: number, fallback = 0) {
   const parsed = Number(value);
   if (!Number.isFinite(parsed)) return fallback;
-  return Math.max(0, Math.min(max, Math.trunc(parsed)));
+  if (parsed <= 0) return fallback;
+  return Math.min(max, Math.trunc(parsed));
 }
 
 export function agentRoutes(
@@ -109,6 +116,7 @@ export function agentRoutes(
   // Legacy hardcoded maps — used as fallback when adapter module does not
   // declare capability flags explicitly.
   const DEFAULT_INSTRUCTIONS_PATH_KEYS: Record<string, string> = {
+    acpx_local: "instructionsFilePath",
     claude_local: "instructionsFilePath",
     codex_local: "instructionsFilePath",
     droid_local: "instructionsFilePath",
@@ -825,6 +833,21 @@ export function agentRoutes(
     adapterConfig: Record<string, unknown>,
   ): Record<string, unknown> {
     const next = { ...adapterConfig };
+    if (adapterType === "acpx_local") {
+      if (!asNonEmptyString(next.agent)) {
+        next.agent = DEFAULT_ACPX_LOCAL_AGENT;
+      }
+      if (!asNonEmptyString(next.mode)) {
+        next.mode = DEFAULT_ACPX_LOCAL_MODE;
+      }
+      if (!asNonEmptyString(next.permissionMode)) {
+        next.permissionMode = DEFAULT_ACPX_LOCAL_PERMISSION_MODE;
+      }
+      if (!asNonEmptyString(next.nonInteractivePermissions)) {
+        next.nonInteractivePermissions = DEFAULT_ACPX_LOCAL_NON_INTERACTIVE_PERMISSIONS;
+      }
+      return ensureGatewayDeviceKey(adapterType, next);
+    }
     if (adapterType === "codex_local") {
       if (!asNonEmptyString(next.model)) {
         next.model = DEFAULT_CODEX_LOCAL_MODEL;
@@ -2821,8 +2844,13 @@ export function agentRoutes(
     const companyId = req.params.companyId as string;
     assertCompanyAccess(req, companyId);
 
-    const minCount = readLiveRunsQueryInt(req.query.minCount, 50);
-    const limit = readLiveRunsQueryInt(req.query.limit, 50);
+    // `minCount` is a padding floor for callers that want a minimum number of
+    // recent runs to render (e.g. dashboard cards). It must default to 0 so
+    // callers asking for "live runs" get only actually-live runs — otherwise
+    // every caller with no minCount param gets up to 50 historical runs
+    // padded in and renders bogus "live" counts.
+    const minCount = readLiveRunsQueryInt(req.query.minCount, 50, 0);
+    const limit = readLiveRunsQueryInt(req.query.limit, 50, 50);
 
     const columns = {
       id: heartbeatRuns.id,
@@ -2830,6 +2858,8 @@ export function agentRoutes(
       status: heartbeatRuns.status,
       invocationSource: heartbeatRuns.invocationSource,
       triggerDetail: heartbeatRuns.triggerDetail,
+      contextCommentId: sql<string | null>`${heartbeatRuns.contextSnapshot} ->> 'commentId'`.as("contextCommentId"),
+      contextWakeCommentId: sql<string | null>`${heartbeatRuns.contextSnapshot} ->> 'wakeCommentId'`.as("contextWakeCommentId"),
       startedAt: heartbeatRuns.startedAt,
       finishedAt: heartbeatRuns.finishedAt,
       createdAt: heartbeatRuns.createdAt,
@@ -2862,8 +2892,8 @@ export function agentRoutes(
       )
       .orderBy(desc(heartbeatRuns.createdAt));
 
-    const liveRuns = limit > 0 ? await liveRunsQuery.limit(limit) : await liveRunsQuery;
-    const targetRunCount = limit > 0 ? Math.min(minCount, limit) : minCount;
+    const liveRuns = await liveRunsQuery.limit(limit);
+    const targetRunCount = Math.min(minCount, limit);
 
     if (targetRunCount > 0 && liveRuns.length < targetRunCount) {
       const activeIds = liveRuns.map((r) => r.id);
@@ -3066,6 +3096,8 @@ export function agentRoutes(
         status: heartbeatRuns.status,
         invocationSource: heartbeatRuns.invocationSource,
         triggerDetail: heartbeatRuns.triggerDetail,
+        contextCommentId: sql<string | null>`${heartbeatRuns.contextSnapshot} ->> 'commentId'`.as("contextCommentId"),
+        contextWakeCommentId: sql<string | null>`${heartbeatRuns.contextSnapshot} ->> 'wakeCommentId'`.as("contextWakeCommentId"),
         startedAt: heartbeatRuns.startedAt,
         finishedAt: heartbeatRuns.finishedAt,
         createdAt: heartbeatRuns.createdAt,
